@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Fetch Frenzy — Bone Run (Sprite Edition)</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(1200px 800px at 60% -20%, #12141c 0%, #090b10 60%);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    overflow: hidden;
+  }
+  #game { display:block; width:100vw; height:100vh; }
+  .hud {
+    position: fixed; left: 16px; top: 48px;
+    background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+    padding: 10px 12px; border-radius: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    color: #e8eefb; font-weight: 600; line-height: 1.2; user-select: none;
+  }
+  .hud small { display:block; opacity:.75; font-weight:500; }
+  .corner {
+    position: fixed; right: 16px; top: 16px; color: #8aa0ff; opacity:.9; user-select: none;
+    font-size: 12px; letter-spacing:.2px;
+  }
+  .topleft {
+    position: fixed; left: 16px; top: 12px; color: #d6e0ff; opacity:.95; user-select: none;
+    font-size: 14px; font-weight: 700; background: rgba(0,0,0,.35); padding:6px 10px; border-radius: 10px; backdrop-filter: blur(6px);
+  }
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    top: 16px; background: rgba(0,0,0,.55); color:#fff; padding:8px 12px; border-radius:10px;
+    font-size: 12px; opacity: 0; transition: opacity .25s ease;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="topleft">@0xDrkripto ve @0xozzgrr</div>
+<canvas id="game"></canvas>
+<div class="hud">
+  <div>Score: <span id="score">0</span></div>
+  <small>Best: <span id="best">0</span> • Deliveries: <span id="deliveries">0</span></small>
+  <small>Power-up: <span id="power">none</span></small>
+</div>
+<div class="corner">Arrows/WASD · R=Restart · M=Mute · P=Pause</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  let DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+  function resize() {
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.width = Math.floor(window.innerWidth * DPR);
+    canvas.height = Math.floor(window.innerHeight * DPR);
+    canvas.style.width = '100vw'; canvas.style.height = '100vh';
+  }
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
+
+  // HUD
+  const elScore = document.getElementById('score');
+  const elBest  = document.getElementById('best');
+  const elDel   = document.getElementById('deliveries');
+  const elPow   = document.getElementById('power');
+  const toast   = document.getElementById('toast');
+  const setToast = (t) => {
+    toast.textContent = t; toast.classList.add('show');
+    clearTimeout(setToast._t);
+    setToast._t = setTimeout(() => toast.classList.remove('show'), 1400);
+  };
+
+  // Persist best
+  const BEST_KEY = 'fetch_frenzy_best_sprite_v1';
+  let best = +localStorage.getItem(BEST_KEY) || 0;
+  elBest.textContent = best;
+
+  // Audio
+  const audio = {
+    ctx:null, enabled:true,
+    ensure(){ if(!this.enabled) return; if(!this.ctx){ try{ this.ctx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } if(this.ctx && this.ctx.state==='suspended'){ this.ctx.resume&&this.ctx.resume(); } },
+    blip(f=820,d=0.06,t='square',v=0.12){ if(!this.enabled) return; this.ensure(); if(!this.ctx) return; const ct=this.ctx.currentTime; const o=this.ctx.createOscillator(); const g=this.ctx.createGain(); o.type=t; o.frequency.setValueAtTime(f,ct); g.gain.setValueAtTime(0,ct); g.gain.linearRampToValueAtTime(v,ct+0.01); g.gain.exponentialRampToValueAtTime(0.0001,ct+d); o.connect(g).connect(this.ctx.destination); o.start(ct); o.stop(ct+d+0.02); },
+    fx(start=600,end=160,d=0.35){ if(!this.enabled) return; this.ensure(); if(!this.ctx) return; const ct=this.ctx.currentTime; const o=this.ctx.createOscillator(); const g=this.ctx.createGain(); o.type='triangle'; o.frequency.setValueAtTime(start,ct); o.frequency.exponentialRampToValueAtTime(Math.max(1,end),ct+d); g.gain.setValueAtTime(0.16,ct); g.gain.exponentialRampToValueAtTime(0.0001,ct+d); o.connect(g).connect(this.ctx.destination); o.start(ct); o.stop(ct+d+0.03); }
+  };
+
+  // Helpers
+  const rand=(a,b)=>a+Math.random()*(b-a);
+  const randi=(a,b)=>Math.floor(rand(a,b));
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const d2=(x1,y1,x2,y2)=> (x1-x2)*(x1-x2)+(y1-y2)*(y1-y2);
+  const hitC=(x1,y1,r1,x2,y2,r2)=> d2(x1,y1,x2,y2) <= (r1+r2)*(r1+r2);
+
+  // Load dog sprite (external file: dog.png)
+  const dogImg = new Image();
+  dogImg.src = "dog.png";
+
+  // World & objects
+  const world = { padding: 28, w:()=>canvas.width, h:()=>canvas.height };
+  const base = { x: 90*DPR, y: world.h()-90*DPR, r: 28*DPR, emoji: '🏠', label: 'HOME' };
+
+  const dog = { x: base.x, y: base.y, r: 22*DPR, speed: 180, maxSpeed: 360, carrying:false, vx:0, vy:0 };
+  const bone = { x: 0, y: 0, r: 12*DPR, emoji: '🦴', active: false };
+  const cats = [];
+  const puddles = []; // slows down, grows over time
+
+  let score = 0, deliveries=0, state='running', paused=false, time=performance.now();
+  let powTimer = 0; // power-up timer
+  let power = null; // 'zoomies' or 'magnet'
+  const POW_DUR = 6; // seconds
+
+  // Difficulty over time (toned down per your request)
+  let elapsed = 0;
+  let catSpawnTimer = 0;
+  let catSpawnInterval = 10;           // start slower
+  const CAT_SPAWN_FLOOR = 4.5;         // do not go too fast
+
+  function spawnBone() {
+    const m = 60*DPR;
+    bone.x = rand(m, world.w()-m);
+    bone.y = rand(m, world.h()-m);
+    if (hitC(bone.x, bone.y, 80*DPR, base.x, base.y, base.r)) return spawnBone();
+    bone.active = true;
+  }
+
+  function catSpeedScale(){
+    // gentler scaling: +40% by ~60s, +0.8% per delivery
+    return 1 + Math.min(0.8, elapsed/150) + deliveries*0.008;
+  }
+
+  function spawnCat() {
+    const m = 50*DPR;
+    const speed = randi(60, 90) * catSpeedScale();
+    const angle = rand(0, Math.PI*2);
+    const c = { x: rand(m, world.w()-m), y: rand(m, world.h()-m), r: 14*DPR, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, emoji:'😼' };
+    if (hitC(c.x,c.y,c.r*2, dog.x,dog.y,dog.r*2)) return spawnCat();
+    cats.push(c);
+  }
+
+  function spawnPuddle() {
+    const m = 60*DPR;
+    const p = { x: rand(m, world.w()-m), y: rand(m, world.h()-m), r: randi(14,24)*DPR, growth: rand(4,10)*DPR, rMax: randi(46,68)*DPR };
+    if (hitC(p.x,p.y,p.r*1.5, base.x,base.y,base.r*2)) return spawnPuddle();
+    puddles.push(p);
+  }
+
+  function giveRandomPower() {
+    power = Math.random() < 0.5 ? 'zoomies' : 'magnet';
+    powTimer = POW_DUR;
+    elPow.textContent = power;
+    setToast(power==='zoomies' ? 'Zoomies! (speed up)' : 'Magnet! (easier bone pickup)');
+  }
+
+  function reset() {
+    score=0; deliveries=0; state='running'; paused=false; power=null; powTimer=0;
+    elapsed=0; catSpawnTimer=0; catSpawnInterval=10;
+    dog.x = base.x; dog.y = base.y; dog.vx=0; dog.vy=0; dog.carrying=false; dog.speed=180;
+    cats.length=0; puddles.length=0;
+    spawnCat(); // start with 1 cat (not 2)
+    for (let i=0;i<2;i++) spawnPuddle();
+    spawnBone();
+    updateHUD();
+  }
+
+  function updateHUD() {
+    elScore.textContent = score;
+    elDel.textContent = deliveries;
+    elPow.textContent = power ? power : 'none';
+    elBest.textContent = best;
+  }
+
+  // Controls
+  const keys = new Set();
+  const K = { ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right', KeyW:'up', KeyS:'down', KeyA:'left', KeyD:'right' };
+  window.addEventListener('keydown', (e) => {
+    if (K[e.code]) { keys.add(K[e.code]); audio.ensure(); }
+    if (e.code==='KeyM'){ audio.enabled=!audio.enabled; setToast(audio.enabled?'Sound ON':'Sound OFF'); }
+    if (e.code==='KeyP'){ paused=!paused; setToast(paused?'Paused':'Resumed'); }
+    if (e.code==='KeyR'){ if (state!=='running') reset(); }
+  });
+  window.addEventListener('keyup', (e)=>{ if (K[e.code]) keys.delete(K[e.code]); });
+
+  // Init
+  reset();
+
+  // Loop
+  function step(now){
+    const dt = Math.min(0.033, (now - time)/1000);
+    time = now;
+    if (!paused && state==='running') update(dt);
+    draw();
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+
+  function update(dt){
+    elapsed += dt;
+    // shrink cat spawn interval over time (to a floor), but more gently
+    catSpawnTimer += dt;
+    const targetInterval = Math.max(CAT_SPAWN_FLOOR, 10 - elapsed*0.08 - deliveries*0.09);
+    catSpawnInterval += (targetInterval - catSpawnInterval) * 0.05; // ease
+    if (catSpawnTimer >= catSpawnInterval){
+      catSpawnTimer = 0;
+      spawnCat();
+    }
+
+    // power timer
+    if (power){ powTimer -= dt; if (powTimer <= 0){ power=null; elPow.textContent='none'; setToast('Power-up ended'); }}
+
+    // input
+    let ax=0, ay=0;
+    if (keys.has('left')) ax -= 1;
+    if (keys.has('right')) ax += 1;
+    if (keys.has('up')) ay -= 1;
+    if (keys.has('down')) ay += 1;
+    // normalize
+    if (ax||ay){
+      const len = Math.hypot(ax,ay)||1;
+      let sp = dog.speed;
+      if (dog.carrying) sp *= 0.8; // carrying slows a bit
+      if (power==='zoomies') sp *= 1.5;
+      dog.vx = (ax/len)*sp;
+      dog.vy = (ay/len)*sp;
+    } else {
+      dog.vx *= 0.94; dog.vy *= 0.94;
+      if (Math.hypot(dog.vx,dog.vy) < 8) { dog.vx=0; dog.vy=0; }
+    }
+
+    // move dog
+    dog.x += dog.vx*dt; dog.y += dog.vy*dt;
+    const p=world.padding;
+    dog.x = clamp(dog.x, p, world.w()-p);
+    dog.y = clamp(dog.y, p, world.h()-p);
+
+    // puddle slow + growth
+    for (const s of puddles){
+      if (s.r < s.rMax) s.r = Math.min(s.rMax, s.r + s.growth*dt);
+      if (hitC(dog.x,dog.y,dog.r, s.x,s.y,s.r)) {
+        dog.x -= dog.vx*dt*0.45; dog.y -= dog.vy*dt*0.45;
+      }
+    }
+
+    // cats movement with gentle speed scale
+    const scale = catSpeedScale();
+    for (const c of cats){
+      const sp = Math.hypot(c.vx, c.vy) || 1;
+      const dirx = c.vx / sp, diry = c.vy / sp;
+      const newSpeed = Math.min(360, sp * (0.92 + 0.08*scale));
+      c.vx = dirx * newSpeed; c.vy = diry * newSpeed;
+
+      c.x += c.vx*dt; c.y += c.vy*dt;
+      if (c.x < p || c.x > world.w()-p) { c.vx*=-1; c.x = clamp(c.x,p,world.w()-p); }
+      if (c.y < p || c.y > world.h()-p) { c.vy*=-1; c.y = clamp(c.y,p,world.h()-p); }
+      if (hitC(dog.x,dog.y,dog.r, c.x,c.y,c.r)){
+        gameOver();
+        return;
+      }
+    }
+
+    // pick up bone
+    if (bone.active && hitC(dog.x,dog.y,dog.r, bone.x,bone.y,bone.r*(power==='magnet'?2:1))){
+      dog.carrying = true;
+      bone.active = false;
+      audio.blip(960,0.08,'square',0.12);
+      setToast('Got the bone! Bring it home!');
+    }
+
+    // deliver to base
+    if (dog.carrying && hitC(dog.x,dog.y,dog.r, base.x, base.y, base.r)){
+      dog.carrying = false;
+      deliveries += 1;
+      const gain = 12 + Math.floor(Math.max(0, Math.min(220, Math.hypot(dog.vx,dog.vy))) / 10);
+      score += gain;
+      best = Math.max(best, score);
+      localStorage.setItem(BEST_KEY, String(best));
+      audio.blip(760,0.09,'sawtooth',0.14);
+      setToast(`Delivered! +${gain} points`);
+      // easier ramp: extra cat every 3 deliveries
+      if (deliveries % 3 === 0) spawnCat();
+      if (deliveries % 3 === 0) spawnPuddle();
+      if (Math.random() < 0.35) giveRandomPower();
+      spawnBone();
+      updateHUD();
+    }
+  }
+
+  function gameOver(){
+    if (state!=='running') return;
+    state='gameover';
+    audio.fx(520,120,0.4);
+    setToast('Game Over — press R to restart');
+    updateHUD();
+  }
+
+  function draw(){
+    const w=canvas.width, h=canvas.height;
+    ctx.clearRect(0,0,w,h);
+
+    // subtle grid
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.strokeStyle = '#6aa0ff';
+    ctx.lineWidth = 1*DPR;
+    const step = 48*DPR;
+    for (let x=(w%step); x<w; x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+    for (let y=(h%step); y<h; y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    ctx.restore();
+
+    // "Sentient" watermarks
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#95a3ff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i=0;i<14;i++){
+      const sx = (i*173 % (w-80)) + 40;
+      const sy = ((i*317) % (h-80)) + 40;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate((i*37)%360 * Math.PI/180);
+      ctx.font = `${(12 + (i%9))*DPR}px ui-sans-serif, Arial`;
+      ctx.fillText('Sentient', 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // base
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(base.x, base.y, base.r, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(100, 255, 180, 0.12)'; ctx.fill();
+    ctx.lineWidth = 2*DPR; ctx.strokeStyle = 'rgba(140,255,200,0.35)'; ctx.stroke();
+    ctx.font = `${14*DPR}px ui-sans-serif, Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#bfffe0';
+    ctx.fillText(base.emoji, base.x, base.y-2*DPR);
+    ctx.fillText(base.label, base.x, base.y + 16*DPR);
+    ctx.restore();
+
+    // puddles (growing)
+    for (const s of puddles){
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(90,130,255,0.18)';
+      ctx.fill();
+      ctx.lineWidth = 2*DPR; ctx.strokeStyle = 'rgba(130,170,255,0.35)'; ctx.stroke();
+      ctx.restore();
+    }
+
+    // bone
+    if (bone.active){
+      ctx.save();
+      ctx.translate(bone.x, bone.y);
+      ctx.font = `${Math.round(bone.r*2)}px "Apple Color Emoji","Segoe UI Emoji", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(bone.emoji, 0, 0);
+      ctx.restore();
+    }
+
+    // cats
+    for (const c of cats){
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.font = `${Math.round(c.r*2)}px "Apple Color Emoji","Segoe UI Emoji", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.emoji, 0, 0);
+      ctx.restore();
+    }
+
+    // dog sprite
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    const wDog = dog.r*2, hDog = dog.r*2;
+    ctx.drawImage(dogImg, dog.x - wDog/2, dog.y - hDog/2, wDog, hDog);
+    // small bone icon if carrying
+    if (dog.carrying){
+      ctx.font = `${Math.round(12*DPR)}px "Apple Color Emoji","Segoe UI Emoji", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🦴', dog.x + dog.r*0.9, dog.y - dog.r*0.9);
+    }
+    ctx.restore();
+
+    if (state==='gameover'){
+      ctx.save();
+      ctx.globalAlpha=0.85;
+      ctx.fillStyle='rgba(0,0,0,.6)';
+      ctx.fillRect(0,0,w,h);
+      ctx.globalAlpha=1;
+      ctx.fillStyle='#fff';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.font = `${28*DPR}px ui-sans-serif, Arial`;
+      ctx.fillText('Game Over', w/2, h/2 - 24*DPR);
+      ctx.font = `${16*DPR}px ui-sans-serif, Arial`;
+      ctx.fillText('Press R to restart', w/2, h/2 + 8*DPR);
+      ctx.restore();
+    }
+  }
+
+  // expose for console
+  window.fetchFrenzy = { reset };
+})();
+</script>
+</body>
+</html>
