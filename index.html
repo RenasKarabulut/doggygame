@@ -62,7 +62,7 @@
   window.addEventListener('resize', resize, { passive: true });
   resize();
 
-  // HUD
+  
   const elScore = document.getElementById('score');
   const elBest  = document.getElementById('best');
   const elDel   = document.getElementById('deliveries');
@@ -74,12 +74,12 @@
     setToast._t = setTimeout(() => toast.classList.remove('show'), 1400);
   };
 
-  // Persist best
+  
   const BEST_KEY = 'fetch_frenzy_best_sprite_v1';
   let best = +localStorage.getItem(BEST_KEY) || 0;
   elBest.textContent = best;
 
-  // Audio
+  
   const audio = {
     ctx:null, enabled:true,
     ensure(){ if(!this.enabled) return; if(!this.ctx){ try{ this.ctx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } if(this.ctx && this.ctx.state==='suspended'){ this.ctx.resume&&this.ctx.resume(); } },
@@ -87,18 +87,18 @@
     fx(start=600,end=160,d=0.35){ if(!this.enabled) return; this.ensure(); if(!this.ctx) return; const ct=this.ctx.currentTime; const o=this.ctx.createOscillator(); const g=this.ctx.createGain(); o.type='triangle'; o.frequency.setValueAtTime(start,ct); o.frequency.exponentialRampToValueAtTime(Math.max(1,end),ct+d); g.gain.setValueAtTime(0.16,ct); g.gain.exponentialRampToValueAtTime(0.0001,ct+d); o.connect(g).connect(this.ctx.destination); o.start(ct); o.stop(ct+d+0.03); }
   };
 
-  // Helpers
+  
   const rand=(a,b)=>a+Math.random()*(b-a);
   const randi=(a,b)=>Math.floor(rand(a,b));
   const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
   const d2=(x1,y1,x2,y2)=> (x1-x2)*(x1-x2)+(y1-y2)*(y1-y2);
   const hitC=(x1,y1,r1,x2,y2,r2)=> d2(x1,y1,x2,y2) <= (r1+r2)*(r1+r2);
 
-  // Load dog sprite (external file: dog.png)
+ 
   const dogImg = new Image();
   dogImg.src = "dog.png";
 
-  // World & objects
+  
   const world = { padding: 28, w:()=>canvas.width, h:()=>canvas.height };
   const base = { x: 90*DPR, y: world.h()-90*DPR, r: 28*DPR, emoji: '🏠', label: 'HOME' };
 
@@ -112,7 +112,7 @@
   let power = null; // 'zoomies' or 'magnet'
   const POW_DUR = 6; // seconds
 
-  // Difficulty over time (toned down per your request)
+  
   let elapsed = 0;
   let catSpawnTimer = 0;
   let catSpawnInterval = 10;           // start slower
@@ -127,7 +127,7 @@
   }
 
   function catSpeedScale(){
-    // gentler scaling: +40% by ~60s, +0.8% per delivery
+    
     return 1 + Math.min(0.8, elapsed/150) + deliveries*0.008;
   }
 
@@ -172,7 +172,7 @@
     elBest.textContent = best;
   }
 
-  // Controls
+  
   const keys = new Set();
   const K = { ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right', KeyW:'up', KeyS:'down', KeyA:'left', KeyD:'right' };
   window.addEventListener('keydown', (e) => {
@@ -183,10 +183,10 @@
   });
   window.addEventListener('keyup', (e)=>{ if (K[e.code]) keys.delete(K[e.code]); });
 
-  // Init
+ 
   reset();
 
-  // Loop
+  
   function step(now){
     const dt = Math.min(0.033, (now - time)/1000);
     time = now;
@@ -198,7 +198,7 @@
 
   function update(dt){
     elapsed += dt;
-    // shrink cat spawn interval over time (to a floor), but more gently
+    
     catSpawnTimer += dt;
     const targetInterval = Math.max(CAT_SPAWN_FLOOR, 10 - elapsed*0.08 - deliveries*0.09);
     catSpawnInterval += (targetInterval - catSpawnInterval) * 0.05; // ease
@@ -207,16 +207,16 @@
       spawnCat();
     }
 
-    // power timer
+   
     if (power){ powTimer -= dt; if (powTimer <= 0){ power=null; elPow.textContent='none'; setToast('Power-up ended'); }}
 
-    // input
+    
     let ax=0, ay=0;
     if (keys.has('left')) ax -= 1;
     if (keys.has('right')) ax += 1;
     if (keys.has('up')) ay -= 1;
     if (keys.has('down')) ay += 1;
-    // normalize
+    
     if (ax||ay){
       const len = Math.hypot(ax,ay)||1;
       let sp = dog.speed;
@@ -229,13 +229,13 @@
       if (Math.hypot(dog.vx,dog.vy) < 8) { dog.vx=0; dog.vy=0; }
     }
 
-    // move dog
+   
     dog.x += dog.vx*dt; dog.y += dog.vy*dt;
     const p=world.padding;
     dog.x = clamp(dog.x, p, world.w()-p);
     dog.y = clamp(dog.y, p, world.h()-p);
 
-    // puddle slow + growth
+    
     for (const s of puddles){
       if (s.r < s.rMax) s.r = Math.min(s.rMax, s.r + s.growth*dt);
       if (hitC(dog.x,dog.y,dog.r, s.x,s.y,s.r)) {
@@ -243,7 +243,7 @@
       }
     }
 
-    // cats movement with gentle speed scale
+    
     const scale = catSpeedScale();
     for (const c of cats){
       const sp = Math.hypot(c.vx, c.vy) || 1;
@@ -260,7 +260,7 @@
       }
     }
 
-    // pick up bone
+    
     if (bone.active && hitC(dog.x,dog.y,dog.r, bone.x,bone.y,bone.r*(power==='magnet'?2:1))){
       dog.carrying = true;
       bone.active = false;
@@ -268,7 +268,7 @@
       setToast('Got the bone! Bring it home!');
     }
 
-    // deliver to base
+    
     if (dog.carrying && hitC(dog.x,dog.y,dog.r, base.x, base.y, base.r)){
       dog.carrying = false;
       deliveries += 1;
@@ -278,7 +278,7 @@
       localStorage.setItem(BEST_KEY, String(best));
       audio.blip(760,0.09,'sawtooth',0.14);
       setToast(`Delivered! +${gain} points`);
-      // easier ramp: extra cat every 3 deliveries
+    
       if (deliveries % 3 === 0) spawnCat();
       if (deliveries % 3 === 0) spawnPuddle();
       if (Math.random() < 0.35) giveRandomPower();
@@ -299,7 +299,7 @@
     const w=canvas.width, h=canvas.height;
     ctx.clearRect(0,0,w,h);
 
-    // subtle grid
+    
     ctx.save();
     ctx.globalAlpha = 0.06;
     ctx.strokeStyle = '#6aa0ff';
@@ -309,7 +309,7 @@
     for (let y=(h%step); y<h; y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
     ctx.restore();
 
-    // "Sentient" watermarks
+    
     ctx.save();
     ctx.globalAlpha = 0.08;
     ctx.fillStyle = '#95a3ff';
@@ -326,7 +326,7 @@
     }
     ctx.restore();
 
-    // base
+   
     ctx.save();
     ctx.beginPath();
     ctx.arc(base.x, base.y, base.r, 0, Math.PI*2);
@@ -339,7 +339,7 @@
     ctx.fillText(base.label, base.x, base.y + 16*DPR);
     ctx.restore();
 
-    // puddles (growing)
+    
     for (const s of puddles){
       ctx.save();
       ctx.beginPath();
@@ -350,7 +350,7 @@
       ctx.restore();
     }
 
-    // bone
+   
     if (bone.active){
       ctx.save();
       ctx.translate(bone.x, bone.y);
@@ -360,7 +360,7 @@
       ctx.restore();
     }
 
-    // cats
+    
     for (const c of cats){
       ctx.save();
       ctx.translate(c.x, c.y);
@@ -370,12 +370,12 @@
       ctx.restore();
     }
 
-    // dog sprite
+    
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     const wDog = dog.r*2, hDog = dog.r*2;
     ctx.drawImage(dogImg, dog.x - wDog/2, dog.y - hDog/2, wDog, hDog);
-    // small bone icon if carrying
+    
     if (dog.carrying){
       ctx.font = `${Math.round(12*DPR)}px "Apple Color Emoji","Segoe UI Emoji", sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -399,7 +399,7 @@
     }
   }
 
-  // expose for console
+  
   window.fetchFrenzy = { reset };
 })();
 </script>
